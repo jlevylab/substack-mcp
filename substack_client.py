@@ -701,10 +701,7 @@ class SubstackClient:
     def test_connection(self) -> bool:
         """Test if connected with valid credentials"""
         try:
-            self._put(self.sub_base, "/user-setting", {
-                "type": "last_home_tab",
-                "value_text": "inbox"
-            })
+            self._get(self.sub_base, "/handle/options")
             return True
         except:
             return False
@@ -713,11 +710,8 @@ class SubstackClient:
         """Get authenticated user's ID"""
         if self._user_id:
             return self._user_id
-        r = self._put(self.sub_base, "/user-setting", {
-            "type": "last_home_tab",
-            "value_text": "inbox"
-        })
-        self._user_id = r.get("user_id")
+        r = self._get(self.sub_base, "/settings")
+        self._user_id = r.get("userInboxView", {}).get("user_id")
         return self._user_id
 
     def get_handle(self) -> str:
@@ -832,9 +826,24 @@ class SubstackClient:
 
     def get_drafts(self) -> List[SubstackDraft]:
         """Get all drafts"""
-        r = self._get(self.pub_base, "/drafts")
+        # Substack returns {"posts": [...], "hasMore":, "nextCursor":} a page at
+        # a time; older responses were a bare list. The endpoint rejects a limit
+        # param, so walk the cursor to get everything.
+        items = []
+        cursor = None
+        while True:
+            path = "/drafts" if cursor is None else f"/drafts?cursor={cursor}"
+            r = self._get(self.pub_base, path)
+            if not isinstance(r, dict):
+                items.extend(r)
+                break
+            items.extend(r.get("posts", []))
+            cursor = r.get("nextCursor")
+            if not r.get("hasMore") or cursor is None:
+                break
+
         drafts = []
-        for d in r:
+        for d in items:
             drafts.append(SubstackDraft(
                 id=d["id"],
                 title=d.get("draft_title", ""),
